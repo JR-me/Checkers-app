@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Checkers — Community Hub</title>
+
+<!-- COOP/COEP via service worker (needed for XMTP on GitHub Pages) -->
+<script src="coi-serviceworker.js"></script>
+
+<link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet"/>
+
+<!-- ethers v6 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+
+<!-- XMTP JS SDK v11 (last stable CDN-compatible version) -->
+<script src="https://unpkg.com/@xmtp/xmtp-js@11.3.0/dist/xmtp.cjs.production.min.js"></script>
+
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --pink:#ff6eb4;--yellow:#ffd93d;--mint:#6ee7b7;--sky:#60c8f5;
+  --coral:#ff7f5c;--purple:#b48aff;--bg:#fff9f0;--card:#fff;
+  --text:#2d2640;--muted:#9990b8;--radius:20px;
+  --shadow:0 8px 32px rgba(100,60,180,.10);
+}
+body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+
+/* blobs */
+.blobs{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+.blob{position:absolute;border-radius:50%;filter:blur(70px);opacity:.14;animation:drift 12s ease-in-out infinite alternate}
+.blob1{width:500px;height:500px;background:var(--pink);top:-150px;left:-100px}
+.blob2{width:400px;height:400px;background:var(--yellow);top:40%;right:-100px;animation-delay:3s}
+.blob3{width:350px;height:350px;background:var(--mint);bottom:-100px;left:30%;animation-delay:6s}
+.blob4{width:300px;height:300px;background:var(--purple);top:20%;left:20%;animation-delay:9s}
+@keyframes drift{from{transform:translate(0,0) scale(1)}to{transform:translate(40px,30px) scale(1.08)}}
+
+/* shell */
+.shell{position:relative;z-index:1;display:flex;flex-direction:column;height:100vh}
+
+/* topbar */
+.topbar{
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.6rem;
+  padding:.7rem 1.2rem;background:rgba(255,255,255,.88);backdrop-filter:blur(12px);
+  border-bottom:2px solid #f0e8ff;position:sticky;top:0;z-index:100;flex-shrink:0}
+.logo{font-family:'Fredoka One',cursive;font-size:1.5rem;
+  background:linear-gradient(135deg,var(--pink),var(--purple));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.topbar-right{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+.pill{display:flex;align-items:center;gap:.4rem;border-radius:50px;padding:.3rem .8rem;font-size:.78rem;font-weight:800}
+.pill-wallet{background:linear-gradient(135deg,#fff0fa,#f0f0ff);border:2px solid var(--pink)}
+.pill-bal{background:linear-gradient(135deg,var(--yellow),var(--coral));color:white}
+.pill-streak{background:linear-gradient(135deg,var(--coral),var(--pink));color:white}
+.dot-green{width:8px;height:8px;border-radius:50%;background:var(--mint);box-shadow:0 0 6px var(--mint);flex-shrink:0}
+.btn-connect{padding:.45rem 1rem;font-family:'Fredoka One',cursive;font-size:.95rem;
+  color:white;border:none;border-radius:12px;cursor:pointer;
+  background:linear-gradient(135deg,var(--pink),var(--purple));
+  box-shadow:0 3px 12px rgba(180,138,255,.3);transition:transform .15s}
+.btn-connect:hover{transform:translateY(-1px)}
+
+/* main */
+.main{display:grid;grid-template-columns:240px 1fr;flex:1;min-height:0}
+
+/* sidebar */
+.sidebar{
+  background:rgba(255,255,255,.92);border-right:2px solid #f0e8ff;
+  display:flex;flex-direction:column;gap:.4rem;padding:.8rem .6rem;overflow-y:auto}
+.sb-label{font-size:.68rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);padding:.4rem .4rem .1rem}
+.room-btn{
+  width:100%;display:flex;align-items:center;gap:.6rem;padding:.6rem .8rem;
+  border-radius:12px;border:none;background:transparent;cursor:pointer;
+  text-align:left;font-family:'Nunito',sans-serif;font-size:.88rem;font-weight:700;
+  color:var(--text);transition:background .15s}
+.room-btn:hover{background:#f5f0ff}
+.room-btn.active{background:linear-gradient(135deg,#f0ebff,#ffe8f5);color:var(--purple)}
+.room-btn.locked{opacity:.5;cursor:not-allowed}
+.rb-icon{font-size:1rem;flex-shrink:0}
+.rb-name{flex:1}
+.rb-req{font-size:.67rem;color:var(--muted);background:#f0ebff;padding:1px 5px;border-radius:5px;white-space:nowrap}
+
+/* checkin widget */
+.ci-widget{
+  background:linear-gradient(135deg,#fff0f8,#f0f0ff);
+  border:2px solid var(--pink);border-radius:14px;padding:.8rem;margin-top:auto}
+.ci-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem}
+.ci-streak{font-family:'Fredoka One',cursive;font-size:1.4rem;
+  background:linear-gradient(135deg,var(--coral),var(--pink));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.ci-lbl{font-size:.7rem;color:var(--muted);font-weight:700}
+.btn-ci{width:100%;padding:.55rem;font-family:'Fredoka One',cursive;font-size:.9rem;
+  color:white;border:none;border-radius:10px;cursor:pointer;
+  background:linear-gradient(135deg,var(--mint),var(--sky));transition:transform .15s,opacity .2s}
+.btn-ci:hover:not(:disabled){transform:translateY(-1px)}
+.btn-ci:disabled{opacity:.55;cursor:not-allowed}
+.cd-mini{text-align:center;font-family:'Fredoka One',cursive;font-size:.9rem;color:var(--coral);margin-top:.3rem}
+
+/* nft widget */
+.nft-widget{
+  background:linear-gradient(135deg,#f8f0ff,#fff0f8);
+  border:2px solid var(--purple);border-radius:14px;padding:.8rem;margin-top:.4rem}
+.nft-ttl{font-family:'Fredoka One',cursive;font-size:.95rem;color:var(--purple);margin-bottom:.3rem}
+.nft-info{font-size:.72rem;color:var(--muted);line-height:1.5;margin-bottom:.5rem}
+.btn-mint{width:100%;padding:.5rem;font-family:'Fredoka One',cursive;font-size:.85rem;
+  color:white;border:none;border-radius:10px;cursor:pointer;
+  background:linear-gradient(135deg,var(--purple),var(--pink));transition:transform .15s,opacity .2s}
+.btn-mint:hover:not(:disabled){transform:translateY(-1px)}
+.btn-mint:disabled{opacity:.55;cursor:not-allowed}
+.pass-badge{text-align:center;background:#f0fff8;border:1.5px solid var(--mint);
+  border-radius:10px;padding:.4rem;font-size:.78rem;font-weight:800;color:#0d7a4e}
+
+/* chat area */
+.chat-area{display:flex;flex-direction:column;min-height:0}
+
+/* room header */
+.room-hdr{
+  padding:.8rem 1.2rem;background:rgba(255,255,255,.92);
+  border-bottom:2px solid #f0e8ff;display:flex;align-items:center;gap:.7rem;flex-shrink:0}
+.rh-icon{font-size:1.3rem}
+.rh-name{font-family:'Fredoka One',cursive;font-size:1.1rem}
+.rh-desc{font-size:.73rem;color:var(--muted);font-weight:600}
+.rh-badge{margin-left:auto;font-size:.7rem;font-weight:800;padding:.25rem .7rem;
+  border-radius:50px;white-space:nowrap}
+.bg-open{background:#d4edda;color:#155724}
+.bg-vip{background:linear-gradient(135deg,var(--yellow),var(--coral));color:white}
+.bg-streak{background:linear-gradient(135deg,var(--coral),var(--pink));color:white}
+.bg-nft{background:linear-gradient(135deg,var(--purple),var(--pink));color:white}
+
+/* xmtp status */
+.xmtp-status{
+  padding:.4rem 1.2rem;font-size:.73rem;font-weight:700;
+  background:#fffbec;border-bottom:1.5px dashed var(--yellow);
+  color:#7a6000;display:flex;align-items:center;gap:.5rem;flex-shrink:0}
+.xmtp-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.xmtp-dot.connecting{background:var(--yellow);animation:pulse 1s infinite}
+.xmtp-dot.ready{background:var(--mint)}
+.xmtp-dot.error{background:#ff5c5c}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* locked overlay */
+.locked-view{
+  flex:1;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:.8rem;padding:2rem;text-align:center}
+.lv-icon{font-size:3.5rem}
+.lv-title{font-family:'Fredoka One',cursive;font-size:1.4rem;color:var(--purple)}
+.lv-desc{color:var(--muted);font-size:.88rem;max-width:260px;line-height:1.6}
+.lv-prog{background:#f0ebff;border-radius:10px;padding:.6rem 1rem;
+  font-size:.82rem;font-weight:700;color:var(--purple);border:1.5px solid var(--purple)}
+
+/* messages */
+.messages{flex:1;overflow-y:auto;padding:.8rem 1rem;display:flex;flex-direction:column;gap:.5rem}
+.msg{display:flex;gap:.6rem;animation:msgIn .2s ease both}
+@keyframes msgIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.msg.mine{flex-direction:row-reverse}
+.msg-av{width:32px;height:32px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-size:.85rem;font-weight:800;color:white;font-family:'Fredoka One',cursive}
+.msg-body{flex:1;min-width:0}
+.msg.mine .msg-body{display:flex;flex-direction:column;align-items:flex-end}
+.msg-hdr{display:flex;align-items:baseline;gap:.4rem;margin-bottom:.1rem}
+.msg.mine .msg-hdr{flex-direction:row-reverse}
+.msg-addr{font-size:.75rem;font-weight:800;color:var(--purple)}
+.msg-addr.me{color:var(--coral)}
+.msg-time{font-size:.65rem;color:var(--muted)}
+.msg-sbadge{font-size:.62rem;background:linear-gradient(135deg,var(--coral),var(--pink));
+  color:white;border-radius:5px;padding:1px 4px;font-weight:800}
+.msg-txt{background:white;border:1.5px solid #f0ebff;border-radius:0 12px 12px 12px;
+  padding:.45rem .75rem;font-size:.86rem;line-height:1.5;word-break:break-word}
+.msg.mine .msg-txt{background:linear-gradient(135deg,#f0ebff,#ffe8f5);
+  border-color:var(--purple);border-radius:12px 12px 0 12px}
+.sys-msg{text-align:center;font-size:.72rem;color:var(--muted);font-style:italic;padding:.2rem}
+
+/* leaderboard */
+.lb-wrap{flex:1;overflow-y:auto;padding:1rem}
+.lb-row{display:flex;align-items:center;gap:.7rem;padding:.7rem .5rem;
+  border-radius:10px;transition:background .15s}
+.lb-row:hover{background:#faf7ff}
+.lb-row+.lb-row{border-top:1px solid #f0ebff}
+.lb-rank{font-family:'Fredoka One',cursive;font-size:1rem;width:28px;text-align:center;color:var(--muted);flex-shrink:0}
+.lb-rank.gold{color:#f5b800}.lb-rank.silver{color:#a0a8b8}.lb-rank.bronze{color:#c97a3a}
+.lb-addr{flex:1;font-size:.8rem;font-weight:700;font-family:'Courier New',monospace}
+.lb-streak{font-family:'Fredoka One',cursive;font-size:.95rem;color:var(--coral)}
+.lb-you{font-size:.65rem;background:var(--pink);color:white;border-radius:5px;padding:1px 5px;font-weight:800;font-family:'Nunito',sans-serif}
+
+/* input bar */
+.input-bar{padding:.7rem 1rem;background:rgba(255,255,255,.95);
+  border-top:2px solid #f0e8ff;display:flex;gap:.7rem;align-items:center;flex-shrink:0}
+.msg-inp{flex:1;padding:.6rem .9rem;border:2px solid #e8e0ff;border-radius:12px;
+  font-family:'Nunito',sans-serif;font-size:.88rem;outline:none;
+  background:white;color:var(--text);transition:border-color .2s}
+.msg-inp:focus{border-color:var(--purple)}
+.msg-inp:disabled{background:#f8f5ff;cursor:not-allowed}
+.btn-send{padding:.6rem 1rem;font-family:'Fredoka One',cursive;font-size:.9rem;
+  color:white;border:none;border-radius:12px;cursor:pointer;
+  background:linear-gradient(135deg,var(--purple),var(--pink));
+  transition:transform .15s,opacity .2s;white-space:nowrap}
+.btn-send:hover:not(:disabled){transform:translateY(-1px)}
+.btn-send:disabled{opacity:.5;cursor:not-allowed}
+
+/* toast */
+.toast{position:fixed;bottom:1.5rem;left:50%;
+  transform:translateX(-50%) translateY(80px);
+  background:var(--text);color:white;border-radius:12px;
+  padding:.7rem 1.3rem;font-weight:700;font-size:.88rem;
+  box-shadow:0 6px 24px rgba(0,0,0,.15);z-index:999;
+  transition:transform .3s cubic-bezier(.34,1.56,.64,1),opacity .3s;
+  opacity:0;white-space:nowrap;pointer-events:none}
+.toast.show{transform:translateX(-50%) translateY(0);opacity:1}
+.toast.success{background:linear-gradient(135deg,#28c97a,#00b4d8)}
+.toast.error{background:linear-gradient(135deg,#ff6b6b,#ee5a24)}
+.toast.warn{background:linear-gradient(135deg,var(--yellow),var(--coral));color:var(--text)}
+
+/* spinner */
+.sp{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.4);
+  border-top-color:white;border-radius:50%;animation:spin .7s linear infinite;
+  vertical-align:middle;margin-right:5px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+#confetti{position:fixed;inset:0;pointer-events:none;z-index:998}
+.hidden{display:none!important}
+
+/* welcome screen */
+.welcome{
+  flex:1;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:1rem;padding:2rem;text-align:center}
+.welcome-logo{font-family:'Fredoka One',cursive;font-size:3.5rem;
+  background:linear-gradient(135deg,var(--pink),var(--purple),var(--sky));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.welcome-sub{color:var(--muted);font-size:1rem;font-weight:700;max-width:320px;line-height:1.6}
+.btn-big-connect{padding:.9rem 2rem;font-family:'Fredoka One',cursive;font-size:1.2rem;
+  color:white;border:none;border-radius:16px;cursor:pointer;
+  background:linear-gradient(135deg,var(--pink),var(--purple));
+  box-shadow:0 6px 20px rgba(180,138,255,.35);transition:transform .15s,box-shadow .15s}
+.btn-big-connect:hover{transform:translateY(-2px);box-shadow:0 10px 28px rgba(180,138,255,.45)}
+
+@media(max-width:600px){.main{grid-template-columns:1fr}.sidebar{display:none}}
+</style>
+</head>
+<body>
+<div class="blobs">
+  <div class="blob blob1"></div><div class="blob blob2"></div>
+  <div class="blob blob3"></div><div class="blob blob4"></div>
+</div>
+<canvas id="confetti"></canvas>
+
+<div class="shell">
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="logo">✔ Checkers</div>
+    <div class="topbar-right">
+      <div id="topBal"  class="pill pill-bal    hidden">0 CHECKERS</div>
+      <div id="topStrk" class="pill pill-streak hidden">🔥 0</div>
+      <div id="topWal"  class="pill pill-wallet hidden">
+        <div class="dot-green"></div><span id="walAddr">—</span>
+      </div>
+      <button class="btn-connect" id="connectBtn" onclick="connectWallet()">Connect MetaMask</button>
+    </div>
+  </div>
+
+  <!-- WELCOME (shown before connect) -->
+  <div class="welcome" id="welcomeScreen">
+    <div class="welcome-logo">✔ Checkers</div>
+    <div style="font-size:3rem">🎉</div>
+    <div class="welcome-sub">
+      Check in daily, build your streak, earn CHECKERS tokens,<br/>
+      and chat with the community in real-time.
+    </div>
+    <button class="btn-big-connect" onclick="connectWallet()">Connect MetaMask to Start</button>
+    <div style="font-size:.78rem;color:var(--muted);font-weight:700">Base Sepolia Testnet</div>
+  </div>
+
+  <!-- MAIN APP (hidden until connected) -->
+  <div class="main hidden" id="mainApp">
+
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+      <div class="sb-label">💬 Rooms</div>
+      <button class="room-btn active" id="rb-global" onclick="switchRoom('global')">
+        <span class="rb-icon">🌍</span><span class="rb-name">Global Chat</span><span class="rb-req">Open</span>
+      </button>
+      <button class="room-btn" id="rb-vip" onclick="switchRoom('vip')">
+        <span class="rb-icon">💎</span><span class="rb-name">VIP Lounge</span><span class="rb-req">500 🏆</span>
+      </button>
+      <button class="room-btn" id="rb-streak" onclick="switchRoom('streak')">
+        <span class="rb-icon">🔥</span><span class="rb-name">Streak Masters</span><span class="rb-req">7 day streak</span>
+      </button>
+      <button class="room-btn" id="rb-pass" onclick="switchRoom('pass')">
+        <span class="rb-icon">🎫</span><span class="rb-name">Pass Holders</span><span class="rb-req">NFT Pass</span>
+      </button>
+      <button class="room-btn" id="rb-lb" onclick="switchRoom('lb')">
+        <span class="rb-icon">🏅</span><span class="rb-name">Leaderboard</span><span class="rb-req">Open</span>
+      </button>
+
+      <!-- Spacer -->
+      <div style="flex:1"></div>
+
+      <!-- Check-in widget -->
+      <div class="ci-widget">
+        <div class="ci-top">
+          <div>
+            <div class="ci-streak" id="ciStreak">🔥 0</div>
+            <div class="ci-lbl">day streak</div>
+          </div>
+          <div style="font-size:2rem">🔥</div>
+        </div>
+        <button class="btn-ci" id="btnCI" onclick="doCheckIn()">✅ Check In</button>
+        <div id="cdWrap" class="hidden">
+          <div class="cd-mini" id="cdTime">00:00:00</div>
+        </div>
+      </div>
+
+      <!-- NFT widget -->
+      <div class="nft-widget">
+        <div class="nft-ttl">🎫 Checkers Pass</div>
+        <div id="passYes" class="pass-badge hidden">✔ You own a Pass!</div>
+        <div id="passNo">
+          <div class="nft-info">Burn <b>100 CHECKERS</b> to mint your membership NFT.</div>
+          <button class="btn-mint" id="btnMint" onclick="mintPass()">Mint Pass (100 CHECKERS)</button>
+        </div>
+      </div>
+    </div><!-- /sidebar -->
+
+    <!-- CHAT AREA -->
+    <div class="chat-area" id="chatArea">
+
+      <!-- Room header -->
+      <div class="room-hdr">
+        <div class="rh-icon" id="rhIcon">🌍</div>
+        <div>
+          <div class="rh-name" id="rhName">Global Chat</div>
+          <div class="rh-desc" id="rhDesc">Open to all connected wallets</div>
+        </div>
+        <div class="rh-badge bg-open" id="rhBadge">Open</div>
+      </div>
+
+      <!-- XMTP status bar -->
+      <div class="xmtp-status" id="xmtpStatus">
+        <div class="xmtp-dot connecting" id="xmtpDot"></div>
+        <span id="xmtpMsg">Initialising XMTP...</span>
+      </div>
+
+      <!-- Locked overlay -->
+      <div class="locked-view hidden" id="lockedView">
+        <div class="lv-icon">🔒</div>
+        <div class="lv-title" id="lvTitle">Room Locked</div>
+        <div class="lv-desc"  id="lvDesc">You don't meet the requirements yet.</div>
+        <div class="lv-prog"  id="lvProg"></div>
+      </div>
+
+      <!-- Messages -->
+      <div class="messages hidden" id="messages"></div>
+
+      <!-- Leaderboard panel -->
+      <div class="lb-wrap hidden" id="lbWrap"></div>
+
+      <!-- Input bar -->
+      <div class="input-bar hidden" id="inputBar">
+        <input class="msg-inp" id="msgInp" placeholder="Message the room..." maxlength="280"
+               onkeydown="if(event.key==='Enter'&&!event.shiftKey)sendMessage()"/>
+        <button class="btn-send" id="btnSend" onclick="sendMessage()">Send 🚀</button>
+      </div>
+
+    </div><!-- /chat-area -->
+  </div><!-- /main -->
+</div><!-- /shell -->
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+// CONFIG — update addresses after redeployment
+// ═══════════════════════════════════════════════════════════
+const CFG = {
+  CHECKERS_TOKEN: "0xdB3eC8390d2D43346e2D3202cf43B590dcD3dEBb",
+  CHECKIN_ADDR:   "0x5eeD0fC11E326E1D88007c1dCF46a7023760eC27",
+  PASS_ADDR:      "",   // ← fill in after deploying CheckersPass.sol
+  VIP_MIN:        500,  // CHECKERS required for VIP room
+  STREAK_MIN:     7,    // streak days required for Streak Masters
+  XMTP_ENV:       "dev" // "dev" for testnet, "production" for mainnet
+};
+
+// XMTP conversation topics per room (unique identifiers)
+const TOPICS = {
+  global: `checkers-global-${CFG.CHECKIN_ADDR.slice(2,10).toLowerCase()}`,
+  vip:    `checkers-vip-${CFG.CHECKIN_ADDR.slice(2,10).toLowerCase()}`,
+  streak: `checkers-streak-${CFG.CHECKIN_ADDR.slice(2,10).toLowerCase()}`,
+  pass:   `checkers-pass-${CFG.CHECKIN_ADDR.slice(2,10).toLowerCase()}`,
+};
+
+// ── ABIs ────────────────────────────────────────────────────
+const TOKEN_ABI = [
+  "function balanceOf(address) view returns (uint256)",
+  "function approve(address,uint256) returns (bool)"
+];
+const CI_ABI = [
+  "function checkIn() external",
+  "function getUser(address) view returns (uint256,uint256,uint256,uint256,bool,uint256)",
+  "function totalUsers() view returns (uint256)",
+  "function getUsers(uint256,uint256) view returns (address[],uint256[])"
+];
+const PASS_ABI = [
+  "function mint() external",
+  "function hasPass(address) view returns (bool)"
+];
+
+// ── State ───────────────────────────────────────────────────
+let provider, signer, userAddr;
+let tokenC, ciC, passC;
+let xmtpClient = null;
+let xmtpConvos = {};       // room → XMTP conversation object
+let xmtpStreams = {};       // room → stream abort controller
+let currentRoom = "global";
+let userBalance = 0, userStreak = 0, userCanCI = false, userHasPass = false;
+let cdInterval;
+
+// Room metadata
+const ROOMS = {
+  global: {icon:"🌍", name:"Global Chat",    desc:"Open to all connected wallets",              badge:"Open",         bc:"bg-open"},
+  vip:    {icon:"💎", name:"VIP Lounge",     desc:"Exclusive for 500+ CHECKERS holders",        badge:"500 CHECKERS", bc:"bg-vip"},
+  streak: {icon:"🔥", name:"Streak Masters", desc:"For wallets with a 7+ day streak",           badge:"7 Day Streak", bc:"bg-streak"},
+  pass:   {icon:"🎫", name:"Pass Holders",   desc:"Exclusive for NFT membership pass holders",  badge:"NFT Pass",     bc:"bg-nft"},
+  lb:     {icon:"🏅", name:"Leaderboard",    desc:"Top check-in streaks",                       badge:"Open",         bc:"bg-open"},
+};
+
+// ═══════════════════════════════════════════════════════════
+// CONNECT WALLET
+// ═══════════════════════════════════════════════════════════
+async function connectWallet() {
+  if (!window.ethereum) { toast("Please install MetaMask!", "error"); return; }
+  try {
+    document.getElementById("connectBtn").textContent = "Connecting...";
+    document.getElementById("connectBtn").disabled = true;
+
+    provider = new ethers.BrowserProvider(window.ethereum);
+    await provider.send("eth_requestAccounts", []);
+    signer  = await provider.getSigner();
+    userAddr = (await signer.getAddress()).toLowerCase();
+
+    tokenC = new ethers.Contract(CFG.CHECKERS_TOKEN, TOKEN_ABI, signer);
+    ciC    = new ethers.Contract(CFG.CHECKIN_ADDR,   CI_ABI,    signer);
+    if (CFG.PASS_ADDR) passC = new ethers.Contract(CFG.PASS_ADDR, PASS_ABI, signer);
+
+    // Show main app
+    hide("welcomeScreen"); show("mainApp");
+    hide("connectBtn");
+    show("topBal"); show("topStrk"); show("topWal");
+    document.getElementById("walAddr").textContent = short(userAddr);
+
+    await refreshAll();
+    switchRoom("global");
+    initXMTP();
+
+    window.ethereum.on("accountsChanged", ()=>location.reload());
+    window.ethereum.on("chainChanged",    ()=>location.reload());
+  } catch(e) {
+    console.error(e);
+    toast(e.code===4001 ? "Rejected." : "Connection failed.", "error");
+    document.getElementById("connectBtn").textContent = "Connect MetaMask";
+    document.getElementById("connectBtn").disabled = false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// XMTP
+// ═══════════════════════════════════════════════════════════
+async function initXMTP() {
+  setXmtpStatus("connecting", "Connecting to XMTP network...");
+  try {
+    // xmtp-js v11 uses Xmtp.Client
+    const Xmtp = window.Xmtp || window.xmtp;
+    if (!Xmtp) { setXmtpStatus("error","XMTP SDK not loaded"); return; }
+
+    xmtpClient = await Xmtp.Client.create(signer, {
+      env: CFG.XMTP_ENV,
+    });
+
+    setXmtpStatus("ready", "XMTP connected — messages are live ✔");
+    // Load current room conversation
+    await loadXMTPRoom(currentRoom);
+  } catch(e) {
+    console.error("XMTP init error:", e);
+    setXmtpStatus("error", "XMTP unavailable — messages won't persist");
+  }
+}
+
+async function getOrCreateConvo(room) {
+  if (xmtpConvos[room]) return xmtpConvos[room];
+  if (!xmtpClient) return null;
+
+  const topic = TOPICS[room];
+  // Use a "bot" address trick: open a convo with yourself using the topic as context.
+  // For true group chat, a shared address acts as the room host.
+  // We use the CheckIn contract address as the shared room "host" wallet.
+  // Messages sent to this convo are visible to everyone watching the same topic.
+  try {
+    const convo = await xmtpClient.conversations.newConversation(
+      // Use the CheckIn contract addr as the room host (everyone converges on same topic)
+      CFG.CHECKIN_ADDR,
+      { conversationId: topic, metadata: { roomName: room } }
+    );
+    xmtpConvos[room] = convo;
+    return convo;
+  } catch(e) {
+    console.error("convo error:", e);
+    return null;
+  }
+}
+
+async function loadXMTPRoom(room) {
+  if (room === "lb" || !canAccess(room)) return;
+  const convo = await getOrCreateConvo(room);
+  if (!convo) return;
+
+  // Load history
+  const msgs = await convo.messages({ limit: 50 });
+  const container = document.getElementById("messages");
+  container.innerHTML = "";
+  for (const m of msgs) renderXMsg(m, container);
+  container.scrollTop = container.scrollHeight;
+
+  // Stream new messages
+  if (xmtpStreams[room]) xmtpStreams[room].return(); // close old stream
+  streamRoom(room, convo);
+}
+
+async function streamRoom(room, convo) {
+  try {
+    const stream = await convo.streamMessages();
+    xmtpStreams[room] = stream;
+    for await (const msg of stream) {
+      if (msg.senderAddress.toLowerCase() === userAddr) continue; // already shown optimistically
+      if (currentRoom === room) {
+        const container = document.getElementById("messages");
+        renderXMsg(msg, container);
+        container.scrollTop = container.scrollHeight;
+      }
+    }
+  } catch(e) {
+    // Stream closed — normal on room switch
+  }
+}
+
+function renderXMsg(msg, container) {
+  const sender = msg.senderAddress.toLowerCase();
+  const isMe   = sender === userAddr;
+  const color  = addrColor(sender);
+  const text   = typeof msg.content === "string" ? msg.content : "";
+  if (!text) return;
+
+  // Parse streak out of message metadata if present
+  let streak = 0;
+  try { streak = msg.contentTopic ? 0 : 0; } catch(e){}
+
+  const div = document.createElement("div");
+  div.className = "msg" + (isMe ? " mine" : "");
+  div.innerHTML = `
+    <div class="msg-av" style="background:${color}">${sender.slice(2,4).toUpperCase()}</div>
+    <div class="msg-body">
+      <div class="msg-hdr">
+        <span class="msg-addr${isMe?" me":""}">${isMe?"You":short(sender)}</span>
+        <span class="msg-time">${fmtTime(msg.sent)}</span>
+      </div>
+      <div class="msg-txt">${esc(text)}</div>
+    </div>`;
+  container.appendChild(div);
+}
+
+async function sendMessage() {
+  const inp  = document.getElementById("msgInp");
+  const text = inp.value.trim();
+  if (!text) return;
+  if (!canAccess(currentRoom)) { toast("No access to this room.", "error"); return; }
+
+  inp.value = "";
+  inp.disabled = true;
+
+  // Optimistic local render
+  const container = document.getElementById("messages");
+  const div = document.createElement("div");
+  div.className = "msg mine";
+  const color = addrColor(userAddr);
+  div.innerHTML = `
+    <div class="msg-av" style="background:${color}">${userAddr.slice(2,4).toUpperCase()}</div>
+    <div class="msg-body" style="align-items:flex-end">
+      <div class="msg-hdr" style="flex-direction:row-reverse">
+        <span class="msg-addr me">You</span>
+        <span class="msg-time">${fmtTime(new Date())}</span>
+      </div>
+      <div class="msg-txt" style="border-radius:12px 12px 0 12px;background:linear-gradient(135deg,#f0ebff,#ffe8f5);border-color:var(--purple)">${esc(text)}</div>
+    </div>`;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+
+  // Send via XMTP
+  try {
+    const convo = await getOrCreateConvo(currentRoom);
+    if (convo) await convo.send(text);
+  } catch(e) {
+    console.error("send error:", e);
+    toast("Message failed to send.", "error");
+  }
+  inp.disabled = false;
+  inp.focus();
+}
+
+// ═══════════════════════════════════════════════════════════
+// BLOCKCHAIN DATA
+// ═══════════════════════════════════════════════════════════
+async function refreshAll() {
+  await Promise.all([refreshBalance(), refreshUser(), refreshPass()]);
+  updateGating();
+}
+
+async function refreshBalance() {
+  try {
+    const raw = await tokenC.balanceOf(userAddr);
+    userBalance = parseFloat(ethers.formatUnits(raw,18));
+    document.getElementById("topBal").textContent =
+      userBalance.toLocaleString(undefined,{maximumFractionDigits:1}) + " CHECKERS";
+  } catch(e){console.error(e)}
+}
+
+async function refreshUser() {
+  try {
+    const u = await ciC.getUser(userAddr);
+    userStreak   = Number(u[0]);
+    userCanCI    = u[4];
+    document.getElementById("ciStreak").textContent  = "🔥 " + userStreak;
+    document.getElementById("topStrk").textContent   = "🔥 " + userStreak;
+    const btn = document.getElementById("btnCI");
+    clearInterval(cdInterval);
+    if (userCanCI) {
+      btn.disabled = false; btn.textContent = "✅ Check In";
+      hide("cdWrap");
+    } else {
+      btn.disabled = true; btn.textContent = "🎉 Done Today!";
+      show("cdWrap"); startCountdown();
+    }
+  } catch(e){console.error(e)}
+}
+
+async function refreshPass() {
+  if (!passC) return;
+  try {
+    userHasPass = await passC.hasPass(userAddr);
+    userHasPass ? (show("passYes"),hide("passNo")) : (hide("passYes"),show("passNo"));
+  } catch(e){console.error(e)}
+}
+
+// ═══════════════════════════════════════════════════════════
+// GATING
+// ═══════════════════════════════════════════════════════════
+function canAccess(room) {
+  if (room==="global"||room==="lb") return true;
+  if (room==="vip")    return userBalance >= CFG.VIP_MIN;
+  if (room==="streak") return userStreak  >= CFG.STREAK_MIN;
+  if (room==="pass")   return userHasPass || !CFG.PASS_ADDR;
+  return false;
+}
+
+function updateGating() {
+  Object.keys(ROOMS).forEach(r=>{
+    const btn = document.getElementById("rb-"+r);
+    if (!btn) return;
+    canAccess(r) ? btn.classList.remove("locked") : btn.classList.add("locked");
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// ROOM SWITCHING
+// ═══════════════════════════════════════════════════════════
+async function switchRoom(room) {
+  currentRoom = room;
+  document.querySelectorAll(".room-btn").forEach(b=>b.classList.remove("active"));
+  document.getElementById("rb-"+room)?.classList.add("active");
+
+  const m = ROOMS[room];
+  document.getElementById("rhIcon").textContent  = m.icon;
+  document.getElementById("rhName").textContent  = m.name;
+  document.getElementById("rhDesc").textContent  = m.desc;
+  const badge = document.getElementById("rhBadge");
+  badge.textContent = m.badge;
+  badge.className   = "rh-badge " + m.bc;
+
+  hide("lockedView"); hide("messages"); hide("inputBar"); hide("lbWrap");
+
+  if (room === "lb") {
+    show("lbWrap"); loadLeaderboard(); return;
+  }
+
+  if (!canAccess(room)) {
+    show("lockedView"); renderLocked(room); return;
+  }
+
+  show("messages"); show("inputBar");
+  await loadXMTPRoom(room);
+}
+
+function renderLocked(room) {
+  let title="", desc="", prog="";
+  if (room==="vip"){
+    title="💎 VIP Lounge";
+    desc=`You need ${CFG.VIP_MIN} CHECKERS to enter. Keep checking in daily!`;
+    prog=`Your balance: ${userBalance.toFixed(1)} / ${CFG.VIP_MIN} CHECKERS`;
+  } else if (room==="streak"){
+    title="🔥 Streak Masters";
+    desc=`You need a ${CFG.STREAK_MIN}-day streak. Check in every day!`;
+    prog=`Your streak: ${userStreak} / ${CFG.STREAK_MIN} days`;
+  } else if (room==="pass"){
+    title="🎫 Pass Holders";
+    desc=CFG.PASS_ADDR ? "Burn 100 CHECKERS to mint your Pass and unlock this room."
+                       : "Deploy CheckersPass.sol and add its address to the app.";
+    prog=CFG.PASS_ADDR ? `Your balance: ${userBalance.toFixed(1)} CHECKERS (mint costs 100)`
+                       : "Contract not yet deployed";
+  }
+  document.getElementById("lvTitle").textContent = title;
+  document.getElementById("lvDesc").textContent  = desc;
+  document.getElementById("lvProg").textContent  = prog;
+}
+
+// ═══════════════════════════════════════════════════════════
+// CHECK-IN
+// ═══════════════════════════════════════════════════════════
+async function doCheckIn() {
+  const btn = document.getElementById("btnCI");
+  try {
+    btn.disabled=true; btn.innerHTML='<span class="sp"></span>Sending...';
+    const tx = await ciC.checkIn();
+    btn.innerHTML='<span class="sp"></span>Confirming...';
+    await tx.wait();
+    toast("🎉 Checked in! CHECKERS incoming!", "success");
+    confetti();
+    await refreshAll();
+    updateGating();
+    // Post a system message to the global room
+    try {
+      const convo = await getOrCreateConvo("global");
+      if (convo) await convo.send(`🎉 ${short(userAddr)} just checked in! Streak: ${userStreak} 🔥`);
+    } catch(e){}
+  } catch(e){
+    console.error(e);
+    btn.disabled=false; btn.textContent="✅ Check In";
+    toast(e.code===4001?"Cancelled.":e.message?.includes("Already")?"Already checked in today!":"Failed.", "error");
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// MINT PASS
+// ═══════════════════════════════════════════════════════════
+async function mintPass() {
+  if (!CFG.PASS_ADDR) { toast("Deploy CheckersPass.sol first.", "warn"); return; }
+  if (userBalance<100){ toast("You need 100 CHECKERS to mint.", "error"); return; }
+  const btn = document.getElementById("btnMint");
+  try {
+    btn.disabled=true; btn.innerHTML='<span class="sp"></span>Approving...';
+    const appTx = await tokenC.approve(CFG.PASS_ADDR, ethers.parseUnits("100",18));
+    await appTx.wait();
+    btn.innerHTML='<span class="sp"></span>Minting...';
+    const mintTx = await passC.mint();
+    await mintTx.wait();
+    toast("🎫 Checkers Pass minted!", "success");
+    confetti();
+    await refreshAll(); updateGating();
+  } catch(e){
+    console.error(e);
+    btn.disabled=false; btn.textContent="Mint Pass (100 CHECKERS)";
+    toast(e.code===4001?"Cancelled.":"Mint failed.", "error");
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// LEADERBOARD
+// ═══════════════════════════════════════════════════════════
+async function loadLeaderboard() {
+  const wrap = document.getElementById("lbWrap");
+  wrap.innerHTML='<div style="color:var(--muted);padding:1rem;font-size:.85rem">Loading...</div>';
+  try {
+    const total = Number(await ciC.totalUsers());
+    if (!total){ wrap.innerHTML='<div style="color:var(--muted);padding:1rem">No check-ins yet!</div>'; return; }
+    const {0:addrs,1:streaks} = await ciC.getUsers(0, Math.min(total,50));
+    const entries = [...addrs.map((a,i)=>({a,s:Number(streaks[i])}))]
+      .sort((x,y)=>y.s-x.s).slice(0,20);
+    const M=["🥇","🥈","🥉"], RC=["gold","silver","bronze"];
+    wrap.innerHTML = entries.map((e,i)=>{
+      const isMe = e.a.toLowerCase()===userAddr;
+      return `<div class="lb-row">
+        <div class="lb-rank ${i<3?RC[i]:""}">${i<3?M[i]:"#"+(i+1)}</div>
+        <div class="lb-addr">${short(e.a)} ${isMe?'<span class="lb-you">YOU</span>':''}</div>
+        <div class="lb-streak">🔥 ${e.s}</div>
+      </div>`;
+    }).join("");
+  } catch(e){ wrap.innerHTML='<div style="color:var(--muted);padding:1rem">Failed to load.</div>'; }
+}
+
+// ═══════════════════════════════════════════════════════════
+// COUNTDOWN
+// ═══════════════════════════════════════════════════════════
+function startCountdown(){
+  function tick(){
+    const now=new Date();
+    const mn=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()+1));
+    const d=mn-now;
+    const h=String(Math.floor(d/3600000)).padStart(2,"0");
+    const m=String(Math.floor((d%3600000)/60000)).padStart(2,"0");
+    const s=String(Math.floor((d%60000)/1000)).padStart(2,"0");
+    document.getElementById("cdTime").textContent=`${h}:${m}:${s}`;
+    if(d<=0){clearInterval(cdInterval);refreshUser();}
+  }
+  tick(); cdInterval=setInterval(tick,1000);
+}
+
+// ═══════════════════════════════════════════════════════════
+// XMTP STATUS BAR
+// ═══════════════════════════════════════════════════════════
+function setXmtpStatus(state, msg) {
+  document.getElementById("xmtpMsg").textContent = msg;
+  const dot = document.getElementById("xmtpDot");
+  dot.className = "xmtp-dot " + state;
+  const bar = document.getElementById("xmtpStatus");
+  bar.style.background = state==="ready" ? "#f0fff8"
+                        : state==="error" ? "#fff0f0" : "#fffbec";
+  bar.style.borderColor = state==="ready" ? "var(--mint)"
+                         : state==="error" ? "#ff5c5c" : "var(--yellow)";
+  bar.style.color = state==="ready" ? "#0d7a4e"
+                   : state==="error" ? "#b00000" : "#7a6000";
+}
+
+// ═══════════════════════════════════════════════════════════
+// CONFETTI
+// ═══════════════════════════════════════════════════════════
+function confetti(){
+  const cv=document.getElementById("confetti"),ctx=cv.getContext("2d");
+  cv.width=innerWidth; cv.height=innerHeight;
+  const cols=["#ff6eb4","#ffd93d","#6ee7b7","#60c8f5","#b48aff","#ff7f5c"];
+  const ps=Array.from({length:90},()=>({
+    x:Math.random()*cv.width,y:-20,r:5+Math.random()*5,d:2+Math.random()*3,
+    c:cols[Math.floor(Math.random()*cols.length)],a:0,ts:.1+Math.random()*.1
+  }));
+  let fr;
+  function draw(){
+    ctx.clearRect(0,0,cv.width,cv.height);
+    ps.forEach(p=>{p.y+=p.d;p.a+=p.ts;
+      ctx.beginPath();ctx.ellipse(p.x,p.y,p.r,p.r/2,Math.sin(p.a)*12,0,Math.PI*2);
+      ctx.fillStyle=p.c;ctx.fill();
+    });
+    if(ps.some(p=>p.y<cv.height))fr=requestAnimationFrame(draw);
+    else ctx.clearRect(0,0,cv.width,cv.height);
+  }
+  cancelAnimationFrame(fr);draw();
+  setTimeout(()=>{cancelAnimationFrame(fr);ctx.clearRect(0,0,cv.width,cv.height);},3000);
+}
+
+// ═══════════════════════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════════════════════
+function short(a){return a.slice(0,6)+"..."+a.slice(-4)}
+function fmtTime(d){return new Date(d).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
+const AVCOLS=["#ff6eb4","#b48aff","#60c8f5","#6ee7b7","#ff7f5c","#ffd93d"];
+function addrColor(a){return AVCOLS[parseInt(a.slice(2,4)||"0",16)%AVCOLS.length]}
+function toast(msg,type=""){
+  const el=document.getElementById("toast");
+  el.textContent=msg; el.className="toast"+(type?" "+type:"");
+  setTimeout(()=>el.classList.add("show"),10);
+  setTimeout(()=>el.classList.remove("show"),3500);
+}
+function show(id){document.getElementById(id)?.classList.remove("hidden")}
+function hide(id){document.getElementById(id)?.classList.add("hidden")}
+</script>
+</body>
+</html>
